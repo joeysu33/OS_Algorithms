@@ -1,4 +1,4 @@
-SRCS = philosopher5.c philosopher5_solve1.c
+SRCS = philosopher5.c philosopher5_solve1.c philosopher5_solve2.c
 CFLAGS = -lpthread
 
 all:$(SRCS)
