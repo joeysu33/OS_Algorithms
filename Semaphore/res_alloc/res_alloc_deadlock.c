@@ -53,6 +53,7 @@ typedef struct manager_tag {
 static manager_t mgr = { PTHREAD_MUTEX_INITIALIZER,
   PTHREAD_COND_INITIALIZER, RNUM };
 
+void dump() ;
 //----------管程接口-------------------
 void enter(manager_t *m) {
   pthread_mutex_lock(&m->mutex);
@@ -62,10 +63,15 @@ void leave(manager_t *m) {
 }
 void wait(manager_t *m, int id) {
   assert(id>=0 && id<PNUM);
+  if(pres[0]+pres[1]+pres[2]+m->res != RNUM && m->res >=0) {
+    dump();
+    fprintf(stdout,"ERR:id=%d\n",id);
+    assert(0);
+  }
   if(m->res + pres[id] >= pres_max[id]) {
     //条件成立，可以分配资源
-    pres[id]=pres_max[id];
     m->res -= pres_max[id]-pres[id];
+    pres[id]=pres_max[id];
     fprintf(stdout,"[%02d]-& ",id);
   } else {
     pthread_cond_wait(&m->cond[id], &m->mutex);
@@ -73,17 +79,31 @@ void wait(manager_t *m, int id) {
 }
 void signal(manager_t*m, int id) {
   int i;
+  static int next=0;
   assert(id>=0 && id<PNUM);
+  if(pres[0]+pres[1]+pres[2]+m->res != RNUM && m->res>=0) {
+    dump();
+    assert(0);
+  }
   /*!资源已经分配完成，可以回收了*/
   //fprintf(stdout,"[%02d]-+ ",id);
   if(pres[id] == pres_max[id]) {
     m->res += pres[id];
     pres[id] = 0;
 
-    /*!唤醒第一个能满足条件的*/
-    for(i=0;i<PNUM;++i) {
-      if(pres[i] + m->res >= pres_max[i])
+    /*!唤醒第一个能满足条件的,如果一次能满足一个，则第二个会饥饿*/
+    /*!为了保证每个线程都能有机会获得满足机会，增加一个变量n来调节*/
+    /*!否则结果就是始终第1个线程满足，2,3线程处于饥饿状态*/
+    for(;;++next) {
+      i=next % PNUM;
+      if(pres[i] + m->res >= pres_max[i]) {
+        m->res -= pres_max[i]-pres[i];
+        pres[i] = pres_max[i];
+        /*!找到第一个满足条件的便退出*/
         pthread_cond_signal(&m->cond[i]);
+        next++;
+        break;
+      }
     }
   }
 }
@@ -101,8 +121,8 @@ void* thread(void* arg) {
      * do pthread want to do
      */
     fprintf(stdout, "[%02d]-! ",id);
-    n = random() % 500;
-    if(n<=0) n=99;
+    n = random() % 50;
+    if(n<=0) n=9;
     usleep(1000 * n);
 
     enter(&mgr);
@@ -121,6 +141,9 @@ void insafe_case() {
   pres[0]=3;pres[1]=5;pres[2]=2;
 }
 
+void dump() {
+  fprintf(stdout,"pres[%d]=%d pres[%d]=%d pres[%d]=%d res=%d\n",0,pres[0],1,pres[1],2,pres[2],mgr.res);
+}
 
 int main(int argc, char *argv[]) {
   int c=0, i;
@@ -136,7 +159,10 @@ int main(int argc, char *argv[]) {
   } else {
     safe_case();
   }
+  fprintf(stdout,"c=%d,enter %s mode!\n",c,(c==0)?"insafe_case":"safe_case");
   for(i=0; i<PNUM;++i) mgr.res -= pres[i];
+  fprintf(stdout,"mgr.res=%d\n",mgr.res);
+
   for(i=0; i<PNUM; ++i) {
     args[i]=i;
     pthread_create(&threads[i],NULL,thread,&args[i]);
